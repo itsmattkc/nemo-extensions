@@ -33,7 +33,7 @@
 
 
 static GObjectClass *parent_class;
-static gboolean always_show_extract_to = FALSE;
+static gboolean always_show_extract_to = TRUE;
 
 static void
 extract_to_callback (NemoMenuItem *item,
@@ -75,6 +75,61 @@ extract_to_callback (NemoMenuItem *item,
 
 
 static void
+extract_to_sub_callback (NemoMenuItem *item,
+		       gpointer          user_data)
+{
+	GList            *files, *scan;
+	GString          *cmd;
+
+	files = g_object_get_data (G_OBJECT (item), "files");
+
+	cmd = g_string_new ("file-roller --force --extract-to=");
+
+	for (scan = files; scan; scan = scan->next) {
+		NemoFileInfo *file = scan->data;
+		char             *uri;
+		char             *quoted_uri;
+		char             *dir_uri;
+		char             *quoted_dir_uri;
+		char             *basename;
+		char             *quoted_basename;
+		char             *basename_extension;
+
+		uri = nemo_file_info_get_uri (file);
+		quoted_uri = g_shell_quote (uri);
+		dir_uri = g_path_get_dirname(uri);
+		quoted_dir_uri = g_shell_quote (dir_uri);
+		basename = g_path_get_basename (uri);
+
+		// Cut off extension
+		basename_extension = g_strrstr(basename, ".");
+		if (basename_extension) {
+			// If there's a . assume it's for the extension and terminate the string here
+			*basename_extension = 0;
+		}
+
+		quoted_basename = g_shell_quote (basename);
+
+		g_string_append_printf (cmd, "%s/%s %s", quoted_dir_uri, quoted_basename, quoted_uri);
+		g_free (uri);
+		g_free (quoted_uri);
+		g_free (dir_uri);
+		g_free (quoted_dir_uri);
+		g_free (basename);
+		g_free (quoted_basename);
+	}
+
+	g_spawn_command_line_async (cmd->str, NULL);
+
+#ifdef DEBUG
+	g_print ("EXEC: %s\n", cmd->str);
+#endif
+
+	g_string_free (cmd, TRUE);
+}
+
+
+static void
 extract_here_callback (NemoMenuItem *item,
 		       gpointer          user_data)
 {
@@ -83,18 +138,24 @@ extract_here_callback (NemoMenuItem *item,
 
 	files = g_object_get_data (G_OBJECT (item), "files");
 
-	cmd = g_string_new ("file-roller --extract-here");
+	cmd = g_string_new ("file-roller --extract-to=");
 
 	for (scan = files; scan; scan = scan->next) {
 		NemoFileInfo *file = scan->data;
 		char             *uri;
 		char             *quoted_uri;
+		char             *dir_uri;
+		char             *quoted_dir_uri;
 
 		uri = nemo_file_info_get_uri (file);
 		quoted_uri = g_shell_quote (uri);
-		g_string_append_printf (cmd, " %s", quoted_uri);
+		dir_uri = g_path_get_dirname(uri);
+		quoted_dir_uri = g_shell_quote (dir_uri);
+		g_string_append_printf (cmd, "%s %s", quoted_dir_uri, quoted_uri);
 		g_free (uri);
 		g_free (quoted_uri);
+		g_free (dir_uri);
+		g_free (quoted_dir_uri);
 	}
 
 	g_spawn_command_line_async (cmd->str, NULL);
@@ -327,23 +388,44 @@ nemo_fr_get_file_items (NemoMenuProvider *provider,
 	one_compressed_archive = one_archive && all_archives_compressed;
 
 	if (all_archives && can_write) {
-		NemoMenuItem *item;
+		NemoMenuItem *extract_here_item;
 
-		item = nemo_menu_item_new ("NemoFr::extract_here",
+		extract_here_item = nemo_menu_item_new ("NemoFr::extract_here",
 					       _("Extract Here"),
 					       /* Translators: the current position is the current folder */
 					       _("Extract the selected archive to the current position"),
 					       "extract-archive-symbolic");
-		g_signal_connect (item,
+		g_signal_connect (extract_here_item,
 				  "activate",
 				  G_CALLBACK (extract_here_callback),
 				  provider);
-		g_object_set_data_full (G_OBJECT (item),
+		g_object_set_data_full (G_OBJECT (extract_here_item),
 					"files",
 					nemo_file_info_list_copy (files),
 					(GDestroyNotify) nemo_file_info_list_free);
 
-		items = g_list_append (items, item);
+		items = g_list_append (items, extract_here_item);
+
+
+
+		NemoMenuItem *extract_to_sub_item;
+
+		extract_to_sub_item = nemo_menu_item_new ("NemoFr::extract_to_sub",
+					       _("Extract To Sub-Folder"),
+					       /* Translators: the current position is the current folder */
+					       _("Extract the selected archive to its own sub-folder"),
+					       "extract-archive-symbolic");
+		g_signal_connect (extract_to_sub_item,
+				  "activate",
+				  G_CALLBACK (extract_to_sub_callback),
+				  provider);
+		g_object_set_data_full (G_OBJECT (extract_to_sub_item),
+					"files",
+					nemo_file_info_list_copy (files),
+					(GDestroyNotify) nemo_file_info_list_free);
+
+		items = g_list_append (items, extract_to_sub_item);
+
 	}
 	if (all_archives &&
         (!can_write || always_show_extract_to)) {
